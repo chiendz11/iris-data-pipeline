@@ -1,0 +1,10 @@
+data:
+  test_size: 0.2
+  random_state: 42
+model:
+  c: 1.0
+  max_iter: 400
+quality_gate:
+  min_accuracy: 0.90
+  min_improvement: 0.00
+

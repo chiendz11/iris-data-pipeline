@@ -1,0 +1,21 @@
+stages:
+  prepare:
+    cmd: python -m src.prepare
+    deps:
+      - src/prepare.py
+    outs:
+      - data/iris.csv
+  train:
+    cmd: python -m src.train
+    deps:
+      - data/iris.csv
+      - src/config.py
+      - src/train.py
+    params:
+      - data
+      - model
+      - quality_gate
+    metrics:
+      - metrics.json:
+          cache: false
+

@@ -1,0 +1,70 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: iris-training
+  namespace: mlops
+spec:
+  entrypoint: pipeline
+  arguments:
+    parameters:
+      - name: image
+        value: ghcr.io/REPLACE_ME/iris-training:latest
+      - name: mlflow-tracking-uri
+        value: http://mlflow.model-registry.svc.cluster.local:5000
+  volumeClaimTemplates:
+    - metadata:
+        name: workspace
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 256Mi
+  templates:
+    - name: pipeline
+      dag:
+        tasks:
+          - name: prepare
+            template: prepare
+          - name: train-and-evaluate
+            dependencies: [prepare]
+            template: train
+          - name: verify-quality-gate
+            dependencies: [train-and-evaluate]
+            template: verify
+    - name: prepare
+      container:
+        image: "{{workflow.parameters.image}}"
+        command: [python, -m, src.prepare]
+        volumeMounts:
+          - name: workspace
+            mountPath: /app/data
+    - name: train
+      container:
+        image: "{{workflow.parameters.image}}"
+        command: [python, -m, src.train]
+        env:
+          - name: MLFLOW_TRACKING_URI
+            value: "{{workflow.parameters.mlflow-tracking-uri}}"
+          - name: REGISTER_MODEL
+            value: "true"
+          - name: GIT_COMMIT
+            value: "{{workflow.uid}}"
+        volumeMounts:
+          - name: workspace
+            mountPath: /app/data
+          - name: workspace
+            mountPath: /app/outputs
+    - name: verify
+      script:
+        image: python:3.12-alpine
+        command: [python]
+        volumeMounts:
+          - name: workspace
+            mountPath: /workspace
+        source: |
+          import json
+          from pathlib import Path
+          status = json.loads(Path("/workspace/promotion.json").read_text())
+          if not status["promoted"]:
+              raise SystemExit("Quality gate did not promote the candidate")
+          print(f"Promoted model version {status['model_version']}")
