@@ -15,6 +15,7 @@ on:
       - "tests/**"
       - ".github/workflows/ci.yml"
   pull_request:
+  merge_group:
 
 permissions:
   contents: read
@@ -23,8 +24,8 @@ jobs:
   test-and-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
           cache: pip
@@ -39,6 +40,17 @@ jobs:
       - name: Build image locally
         run: docker build -t iris-training:${{ github.sha }} .
 
+  ci-gate:
+    name: ci-gate
+    if: always()
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require validation to pass
+        env:
+          TEST_AND_BUILD_RESULT: ${{ needs.test-and-build.result }}
+        run: test "${TEST_AND_BUILD_RESULT}" = success
+
   publish-data:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test-and-build
@@ -52,8 +64,8 @@ jobs:
       ECR_REPOSITORY: ${{ vars.TRAINING_ECR_REPOSITORY }}
       DVC_BUCKET: ${{ vars.DVC_BUCKET }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
           cache: pip
@@ -61,13 +73,13 @@ jobs:
       - name: Build immutable training image
         run: docker build -t iris-training:${{ github.sha }} .
       - name: Assume AWS deploy role
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Login to ECR
         id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
       - name: Publish immutable training image
         run: |
           docker tag iris-training:${{ github.sha }} "${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:${{ github.sha }}"

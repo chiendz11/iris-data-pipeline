@@ -4,7 +4,6 @@ from pathlib import Path
 
 from sklearn.datasets import load_iris
 
-
 OUTPUT_PATH = Path("data/iris.csv")
 
 
