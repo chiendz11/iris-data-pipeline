@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ import mlflow
 import mlflow.sklearn
 import pandas as pd
 from mlflow import MlflowClient
+from mlflow.exceptions import MlflowException
 from mlflow.models import infer_signature
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score
@@ -17,7 +19,6 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from src.config import load_config
-
 
 FEATURES = ["sepal_length", "sepal_width", "petal_length", "petal_width"]
 TARGET = "species"
@@ -30,6 +31,7 @@ class TrainingResult:
     run_id: str
     model_version: str | None
     promoted: bool
+    baseline_accuracy: float | None = None
 
 
 def make_estimator(c: float, max_iter: int) -> Pipeline:
@@ -64,14 +66,14 @@ def _bool_env(name: str, default: bool) -> bool:
 def _champion_accuracy(client: MlflowClient, model_name: str) -> float | None:
     try:
         champion = client.get_model_version_by_alias(model_name, "champion")
-    except Exception:
+    except MlflowException:
         return None
     run = client.get_run(champion.run_id)
     value = run.data.metrics.get("accuracy")
     return float(value) if value is not None else None
 
 
-def _register_and_promote(
+def _register_candidate(
     *,
     run_id: str,
     model_uri: str,
@@ -79,20 +81,23 @@ def _register_and_promote(
     accuracy: float,
     min_accuracy: float,
     min_improvement: float,
-) -> tuple[str, bool]:
+) -> tuple[str, bool, float | None]:
     client = MlflowClient()
     registered = mlflow.register_model(model_uri=model_uri, name=model_name)
     version = str(registered.version)
     client.set_registered_model_alias(model_name, "candidate", version)
     baseline = _champion_accuracy(client, model_name)
-    promoted = accuracy >= min_accuracy and (
+    eligible = accuracy >= min_accuracy and (
         baseline is None or accuracy >= baseline + min_improvement
     )
-    client.set_model_version_tag(model_name, version, "quality_gate", "passed" if promoted else "failed")
+    client.set_model_version_tag(model_name, version, "quality_gate", "passed" if eligible else "failed")
     client.set_model_version_tag(model_name, version, "source_run_id", run_id)
-    if promoted:
-        client.set_registered_model_alias(model_name, "champion", version)
-    return version, promoted
+    client.set_model_version_tag(
+        model_name, version, "baseline_accuracy", "none" if baseline is None else str(baseline)
+    )
+    # Champion is deliberately untouched here. Argo first rolls this candidate out at
+    # 10%; src.promote changes the alias only after the online canary gate succeeds.
+    return version, eligible, baseline
 
 
 def train(
@@ -151,8 +156,9 @@ def train(
 
     version = None
     promoted = False
+    baseline_accuracy = None
     if register_model:
-        version, promoted = _register_and_promote(
+        version, promoted, baseline_accuracy = _register_candidate(
             run_id=run_id,
             model_uri=model_info.model_uri,
             model_name=model_name,
@@ -161,7 +167,7 @@ def train(
             min_improvement=float(config["quality_gate"]["min_improvement"]),
         )
 
-    result = TrainingResult(accuracy, f1_macro, run_id, version, promoted)
+    result = TrainingResult(accuracy, f1_macro, run_id, version, promoted, baseline_accuracy)
     Path("metrics.json").write_text(
         json.dumps(
             {
@@ -169,7 +175,9 @@ def train(
                 "f1_macro": result.f1_macro,
                 "run_id": result.run_id,
                 "model_version": result.model_version,
-                "promoted": result.promoted,
+                "quality_gate_passed": result.promoted,
+                "baseline_accuracy": result.baseline_accuracy,
+                "bootstrap_required": result.promoted and result.baseline_accuracy is None,
             },
             indent=2,
         )
@@ -178,12 +186,28 @@ def train(
     )
     Path("outputs").mkdir(exist_ok=True)
     Path("outputs/model-version.txt").write_text((version or "unregistered") + "\n", encoding="utf-8")
+    Path("outputs/quality-gate.txt").write_text(str(promoted).lower() + "\n", encoding="utf-8")
+    Path("outputs/bootstrap-required.txt").write_text(
+        str(promoted and baseline_accuracy is None).lower() + "\n", encoding="utf-8"
+    )
     Path("outputs/promotion.json").write_text(
-        json.dumps({"model_version": version, "promoted": promoted}, indent=2) + "\n",
+        json.dumps(
+            {
+                "model_version": version,
+                "quality_gate_passed": promoted,
+                "baseline_accuracy": baseline_accuracy,
+            },
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
     return result
 
 
 if __name__ == "__main__":
-    print(train())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("data_path", nargs="?", default="data/iris.csv")
+    parser.add_argument("config_path", nargs="?", default="params.yaml")
+    cli_args = parser.parse_args()
+    print(train(cli_args.data_path, cli_args.config_path))
