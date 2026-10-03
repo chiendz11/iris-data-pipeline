@@ -1,5 +1,7 @@
-mlflow==3.5.1
+mlflow==3.16.1
 pandas==2.3.3
 scikit-learn==1.7.2
 PyYAML==6.0.3
-
+boto3==1.40.66
+cryptography==50.0.0
+pyarrow==23.0.1

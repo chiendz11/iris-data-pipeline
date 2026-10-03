@@ -12,10 +12,12 @@ dependencies = [
   "pandas>=2.2,<4",
   "scikit-learn>=1.6,<2",
   "PyYAML>=6.0,<7",
+  "boto3>=1.40,<2",
 ]
 
 [tool.setuptools.packages.find]
-include = ["src*"]
+where = ["src"]
+include = ["iris_pipeline*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -23,4 +25,3 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-

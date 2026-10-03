@@ -1,6 +1,4 @@
 [core]
-    remote = minio
-['remote "minio"']
-    url = s3://dvc/iris
-    endpointurl = http://localhost:9000
-
+    remote = aws
+['remote "aws"']
+    url = s3://REPLACE_DVC_BUCKET/dvc-cache

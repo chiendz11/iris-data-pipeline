@@ -1,16 +1,19 @@
 stages:
   prepare:
-    cmd: python -m src.prepare
+    cmd: python -m iris_pipeline.data.prepare
     deps:
-      - src/prepare.py
+      - src/iris_pipeline/data/prepare.py
     outs:
       - data/iris.csv
   train:
-    cmd: python -m src.train
+    cmd: python -m iris_pipeline.training.train
     deps:
       - data/iris.csv
-      - src/config.py
-      - src/train.py
+      - src/iris_pipeline/contracts/model_result.py
+      - src/iris_pipeline/evaluation/offline.py
+      - src/iris_pipeline/training/config.py
+      - src/iris_pipeline/training/model.py
+      - src/iris_pipeline/training/train.py
     params:
       - data
       - model
@@ -18,4 +21,6 @@ stages:
     metrics:
       - metrics.json:
           cache: false
-
+    outs:
+      - outputs/model-result.json:
+          cache: false

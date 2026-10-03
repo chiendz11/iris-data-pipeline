@@ -3,41 +3,181 @@ name: data-pipeline-ci
 on:
   push:
     branches: [main]
+    paths:
+      - "data/**"
+      - "src/**"
+      - "params.yaml"
+      - "dvc.yaml"
+      - "dvc.lock"
+      - "Dockerfile"
+      - "requirements*.txt"
+      - "pyproject.toml"
+      - "tests/**"
+      - "contracts/**"
+      - "docs/model-output-contract.md"
+      - ".github/workflows/ci.yml"
   pull_request:
+  merge_group:
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: data-pipeline-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements-dev.txt
+      - run: pip install -r requirements-dev.txt -e .
       - run: ruff check src tests
-      - run: pytest -q
+      - run: python -m pytest -q
+      - name: Validate committed JSON contracts
+        run: python -m json.tool contracts/model-result-v1.schema.json >/dev/null
       - name: Reproduce pipeline without remote registry
         env:
           REGISTER_MODEL: "false"
-          MLFLOW_TRACKING_URI: file:./mlruns
+          MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
         run: dvc repro
-      - name: Build training image
+      - name: Build image locally
         run: docker build -t iris-training:${{ github.sha }} .
-      - uses: docker/login-action@v3
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Scan the training image
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        with:
-          context: .
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/iris-training:${{ github.sha }},ghcr.io/${{ github.repository_owner }}/iris-training:latest
+          image-ref: iris-training:${{ github.sha }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: "true"
+          exit-code: "1"
 
+  ci-gate:
+    name: ci-gate
+    if: always()
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require validation to pass
+        env:
+          TEST_AND_BUILD_RESULT: ${{ needs.test-and-build.result }}
+        run: test "${TEST_AND_BUILD_RESULT}" = success
+
+  publish-data:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.TRAINING_ECR_REPOSITORY }}
+      DVC_BUCKET: ${{ vars.DVC_BUCKET }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.txt -e .
+      - name: Materialize the deterministic dataset and DVC cache
+        run: dvc repro prepare
+      - name: Build immutable training image
+        run: docker build -t iris-training:${{ github.sha }} .
+      - name: Scan the exact image that will be published
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: iris-training:${{ github.sha }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: "true"
+          exit-code: "1"
+      - name: Assume AWS deploy role
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
+      - name: Publish immutable training image
+        id: publish
+        run: |
+          image_uri="${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}"
+          docker tag iris-training:${{ github.sha }} "${image_uri}:${{ github.sha }}"
+          image_digest="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=${{ github.sha }}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text 2>/dev/null || true)"
+          if [[ "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Immutable tag already exists; reusing ${image_digest}."
+          else
+            docker push "${image_uri}:${{ github.sha }}"
+            image_digest="$(aws ecr describe-images \
+              --repository-name "${ECR_REPOSITORY}" \
+              --image-ids "imageTag=${{ github.sha }}" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text)"
+          fi
+          if [[ ! "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ECR returned an invalid image digest: ${image_digest}" >&2
+            exit 1
+          fi
+          {
+            echo "image_digest=${image_digest}"
+            echo "image_ref=${image_uri}@${image_digest}"
+          } >> "${GITHUB_OUTPUT}"
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+      - name: Sign the immutable ECR digest with GitHub OIDC
+        env:
+          IMAGE_REF: ${{ steps.publish.outputs.image_ref }}
+        run: |
+          certificate_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main"
+          if cosign verify \
+            --certificate-identity "${certificate_identity}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE_REF}" >/dev/null 2>&1; then
+            echo "The digest already has a valid signature from this workflow."
+          else
+            cosign sign --yes "${IMAGE_REF}"
+          fi
+      - name: Record published artifact
+        env:
+          IMAGE_REF: ${{ steps.publish.outputs.image_ref }}
+        run: |
+          {
+            echo "### Training image"
+            echo
+            echo "\`${IMAGE_REF}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+      - name: Push DVC cache to S3
+        run: |
+          dvc remote modify aws url "s3://${DVC_BUCKET}/dvc-cache"
+          dvc push
+      - name: Publish dataset object and trigger Argo
+        # S3/SQS starts the workflow; this app CI does not call or mutate GitOps.
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.image_digest }}
+        run: |
+          LOCK_SHA="$(sha256sum dvc.lock | cut -d' ' -f1)"
+          digest_hex="${IMAGE_DIGEST#sha256:}"
+          dataset_key="datasets/${GITHUB_SHA}/${digest_hex}/iris.csv"
+          if aws s3api head-object \
+            --bucket "${DVC_BUCKET}" \
+            --key "${dataset_key}" >/dev/null 2>&1; then
+            echo "Dataset object already exists; no duplicate training event will be emitted."
+          else
+            aws s3 cp data/iris.csv "s3://${DVC_BUCKET}/${dataset_key}" \
+              --metadata "git-sha=${{ github.sha }},dvc-lock-sha=${LOCK_SHA},training-image-digest=${{ steps.publish.outputs.image_digest }}"
+          fi

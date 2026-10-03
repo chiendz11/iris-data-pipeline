@@ -13,4 +13,3 @@ def load_config(path: str | Path = "params.yaml") -> dict:
     if missing:
         raise ValueError(f"Missing configuration sections: {sorted(missing)}")
     return config
-

@@ -1,32 +1,44 @@
 schema: '2.0'
 stages:
   prepare:
-    cmd: python -m src.prepare
+    cmd: python -m iris_pipeline.data.prepare
     deps:
-    - path: src/prepare.py
+    - path: src/iris_pipeline/data/prepare.py
       hash: md5
-      md5: aea421b94850ec00653126c8ff4ee0b5
-      size: 932
+      md5: 9d7868af5142c5d5d4c7a951fb964145
+      size: 942
     outs:
     - path: data/iris.csv
       hash: md5
       md5: 013d0da08d6506664ce640459139176b
       size: 3858
   train:
-    cmd: python -m src.train
+    cmd: python -m iris_pipeline.training.train
     deps:
     - path: data/iris.csv
       hash: md5
       md5: 013d0da08d6506664ce640459139176b
       size: 3858
-    - path: src/config.py
+    - path: src/iris_pipeline/contracts/model_result.py
       hash: md5
-      md5: bdac20f0b28e595904a310cbf321da51
-      size: 429
-    - path: src/train.py
+      md5: db9debba6e341eb7d43abfd5248a566f
+      size: 3535
+    - path: src/iris_pipeline/evaluation/offline.py
       hash: md5
-      md5: 801266ce26935139ad1f8c6d640f16f7
-      size: 6072
+      md5: b31b10630216d64cd54d5d8aaa4220fc
+      size: 884
+    - path: src/iris_pipeline/training/config.py
+      hash: md5
+      md5: 2bb5b68c4b96b665a253f1aae605b809
+      size: 428
+    - path: src/iris_pipeline/training/model.py
+      hash: md5
+      md5: 1ebff68e88457d246be2a2ff3f48f6c3
+      size: 886
+    - path: src/iris_pipeline/training/train.py
+      hash: md5
+      md5: 56404f2fa4695fb26f35ddb9a633a1ad
+      size: 8045
     params:
       params.yaml:
         data:
@@ -41,5 +53,9 @@ stages:
     outs:
     - path: metrics.json
       hash: md5
-      md5: e4f12d627b64fe40913c6c642f96c15e
-      size: 165
+      md5: 96292dbd85f9006f2bfd2cc7f4d9e48b
+      size: 238
+    - path: outputs/model-result.json
+      hash: md5
+      md5: 45ff77b26310ab2296ad367c3dcc0a20
+      size: 477
