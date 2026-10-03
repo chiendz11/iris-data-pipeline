@@ -4,4 +4,4 @@ scikit-learn==1.7.2
 PyYAML==6.0.3
 boto3==1.40.66
 cryptography==50.0.0
-pyarrow==23.0.1
+pyarrow==25.0.1
