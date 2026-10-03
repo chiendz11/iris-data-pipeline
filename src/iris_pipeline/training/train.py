@@ -46,7 +46,10 @@ def _champion_baseline(
     try:
         champion = client.get_model_version_by_alias(model_name, "champion")
     except MlflowException as error:
-        if error.error_code == "RESOURCE_DOES_NOT_EXIST":
+        if error.error_code == "RESOURCE_DOES_NOT_EXIST" or (
+            error.error_code == "INVALID_PARAMETER_VALUE"
+            and str(error).endswith("Registered model alias champion not found.")
+        ):
             return None, None
         raise
     run = client.get_run(champion.run_id)
