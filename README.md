@@ -1,89 +1,116 @@
 # Iris data and training pipeline (repo 1/5)
 
-Repository 1/5 của capstone MLOps. Repo này sở hữu **dữ liệu, feature preparation,
-training, evaluation và quality gate**; không sở hữu MLflow server hay inference API.
+This repository owns the ML side of the lifecycle: deterministic dataset preparation, dataset
+fetching, training, offline evaluation, MLflow run logging, immutable model registration, and the
+versioned model-result contract. It does not own serving checks, online SLO evaluation, registry
+promotion, Kubernetes manifests, or GitOps rendering.
 
-## Vì sao dùng Iris + Logistic Regression?
+## Why Iris and Logistic Regression?
 
-- Iris có 150 bản ghi, 4 feature số, 3 lớp cân bằng và nằm sẵn trong scikit-learn.
-- CI không phụ thuộc Kaggle/API key/network và train chỉ mất vài giây.
-- Dataset không chứa PII, phù hợp để public repo và demo DVC.
-- Logistic Regression dễ giải thích, model nhỏ, hỗ trợ multiclass và đạt accuracy ổn định > 0.90.
-- Bài toán vẫn đủ thật để demo version dữ liệu, experiment, metric gate, model registry và serving.
+- Iris has 150 records, four numeric features, three balanced classes, and ships with scikit-learn.
+- CI does not depend on Kaggle credentials or an external dataset API, and training takes seconds.
+- The dataset contains no PII, so it is safe for a public capstone repository.
+- Logistic Regression is small and explainable while consistently exceeding the 0.90 accuracy
+  threshold.
+- The example remains rich enough to demonstrate DVC versioning, experiment tracking, quality
+  gates, model registration, and downstream serving.
 
-Không chọn deep learning vì thời gian build image, tải weight và nhu cầu CPU/GPU sẽ làm CI chậm
-mà không bổ sung giá trị MLOps tương ứng cho capstone đầu tiên.
+Deep learning would increase build time, weight downloads, and compute cost without improving the
+MLOps concepts demonstrated by this project.
 
-## Chạy nhanh
+## Source layout
+
+```text
+src/iris_pipeline/
+├── data/          # deterministic preparation and event-driven S3 fetch
+├── training/      # config, estimator, and training orchestration
+├── evaluation/    # offline metrics and champion comparison
+└── contracts/     # versioned model-result serialization
+tests/
+├── unit/
+├── training/
+└── contract/
+contracts/         # consumer-facing JSON Schema
+docs/              # contract and ownership documentation
+```
+
+Production smoke traffic, canary evaluation, MLflow alias promotion, and desired-state rendering
+belong to the release automation image built by `iris-gitops`; none of those capabilities or
+credentials are present in the training image.
+
+## Run locally
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt -e .
 REGISTER_MODEL=false MLFLOW_TRACKING_URI=file:./mlruns dvc repro
 cat metrics.json
+cat outputs/model-result.json
 ```
 
-Để log và đăng ký model vào repo `model-registry` đang chạy:
+To log and register a model version in a locally running MLflow server:
 
 ```bash
 export MLFLOW_TRACKING_URI=http://localhost:5000
 export REGISTER_MODEL=true
-python -m src.prepare
-python -m src.train
+python -m iris_pipeline.data.prepare
+python -m iris_pipeline.training.train
 ```
 
-Model mới luôn được đăng ký và gắn alias `candidate`. Nếu accuracy đạt ngưỡng tuyệt đối và
-cao hơn `champion` ít nhất `min_improvement`, model chỉ được gắn tag
-`quality_gate=passed`; bước train **không tự đổi champion**. Argo chỉ đổi alias `champion`
-sau khi canary online cũng qua ngưỡng latency/error rate.
+Training never changes the `champion` alias. It reads the current champion accuracy, applies the
+absolute and improvement thresholds from `params.yaml`, tags the newly registered version with the
+offline gate result, and writes `outputs/model-result.json` with candidate and baseline model
+versions. Online automation is solely responsible for deciding whether to promote that version or
+restore the recorded baseline.
+Chỉ lỗi MLflow `RESOURCE_DOES_NOT_EXIST` được hiểu là chưa có champion; lỗi server/network hoặc
+champion thiếu metric accuracy làm training fail-closed, không đi nhầm vào bootstrap.
 
-## DVC + S3 và trigger dataset
+## Model-result boundary
 
-`.dvc/config` có remote AWS mẫu. Lấy output `dvc_bucket` từ Terraform rồi cấu hình:
+The complete, authoritative output is documented in
+[`docs/model-output-contract.md`](docs/model-output-contract.md) and validated by
+[`contracts/model-result-v1.schema.json`](contracts/model-result-v1.schema.json). It contains model
+and dataset provenance plus offline metrics; it contains no manifest path or KServe field.
+
+Three text files are derived from that JSON only to support Argo DAG `when` expressions:
+
+- `outputs/model-version.txt`
+- `outputs/baseline-model-version.txt`
+- `outputs/quality-gate.txt`
+- `outputs/bootstrap-required.txt`
+
+The GitOps-owned dispatcher reads the full JSON from the shared workflow volume and turns it into a
+release intent. Consequently, this repo does not authenticate a GitHub App, open a cross-repository
+pull request, or know how production manifests are organized.
+
+## DVC, S3, and dataset events
+
+`.dvc/config` contains a placeholder remote. After the infrastructure stack has published the DVC
+bucket as a GitHub Environment variable, CI configures the effective S3 URL without committing an
+environment-specific bucket name.
+
+For local use:
 
 ```bash
-export DVC_BUCKET=iris-mlops-dev-dvc-xxxxxxxx
+export DVC_BUCKET=your-dvc-bucket
 ./scripts/configure_dvc_remote.sh
 dvc push
 ```
 
-CI dùng GitHub OIDC để nhận credential ngắn hạn. Nó push DVC cache vào `dvc-cache/`, rồi
-copy dataset đã materialize vào `datasets/iris.csv`. Chỉ prefix thứ hai phát S3 notification,
-tránh mỗi object hash của DVC tạo một training run.
+On a merge to `main`, GitHub Actions uses OIDC to obtain short-lived AWS credentials. It builds and
+scans the training image, publishes an immutable source-commit tag to ECR, resolves the registry
+digest, signs that digest keylessly with Cosign, pushes the DVC cache, and uploads the versioned
+dataset object under `datasets/<source-sha>/<training-image-digest>/iris.csv`. The S3 Sensor derives
+both the exact `repository@sha256:...` training image and source commit from that immutable key, so a
+later tag cannot change which code trains the dataset. The S3 event starts the cluster-owned
+training workflow. App CI neither calls GitOps nor mutates Kubernetes.
 
-## CI/CD
+Training writes the full `model-result-v1` contract to the shared Argo volume. The GitOps-owned
+release automation validates that contract, then emits a separate model-release intent for canary,
+promote or rollback. This repo never emits workload-release intent because the training image is an
+input of the event-driven DAG, not a long-running Kubernetes workload.
 
-GitHub Actions chạy lint/test/`dvc repro`, push image bất biến lên ECR, push dữ liệu lên S3.
-S3 gửi event vào SQS; Argo Events Sensor tạo production workflow được quản lý tại
-`iris-gitops/environments/production/data-pipeline`:
-
-`fetch S3 → train/log MLflow → offline gate → GitOps PR 10% → Argo CD/KServe → smoke traffic
-→ Prometheus gate → promote MLflow → GitOps PR 100% → Argo CD/KServe`.
-
-Training image chỉ xuất contract file `model-version.txt`, `quality-gate.txt` và
-`bootstrap-required.txt`; nó không xác thực GitHub App, gửi event, biết đường dẫn/cấu trúc
-InferenceService hay mở GitOps PR. Dispatcher image cùng WorkflowTemplate do `iris-gitops` sở hữu
-nhận các output này và phát release intent `{action, model_version, change_id}`. GitOps CI cùng
-CODEOWNER phải duyệt, reviewer merge, rồi Argo CD reconcile các field deployment được quản lý trong
-Git. Argo Workflow chỉ có Kubernetes RBAC `get/list/watch` để xác nhận desired state đã được
-reconcile và KServe đã Ready, không còn `kubectl patch`.
-
-Nếu online gate thất bại, workflow mở GitOps PR đặt canary traffic về 0 và alias champion vẫn trỏ
-tới model cũ.
-Riêng model đầu tiên chưa có stable revision để chia 90/10 nên dùng nhánh bootstrap 100%; mọi
-model tiếp theo mới đi qua canary 10% bắt buộc.
-Pod dùng IRSA `iris-training` để đọc S3; không có access key trong manifest.
-
-GitHub environment `prod` variables: `AWS_REGION`, `AWS_DEPLOY_ROLE_ARN`,
-`TRAINING_ECR_REPOSITORY`, `DVC_BUCKET`.
-
-Repo này không giữ manifest production và không có quyền mutate Kubernetes. S3 key chứa commit SHA;
-Sensor trong `iris-gitops` ghép SHA đó với ECR repository để mỗi dataset luôn chạy đúng training
-image đã build từ cùng commit.
-
-Model promotion dùng GitHub App riêng chỉ có `Contents/Pull requests: write` trên `iris-gitops`.
-Private key nằm trong AWS Secrets Manager và chỉ được inject vào Dispatch Pod chạy image riêng do
-DevOps build; fetch/train/smoke/evaluate containers không nhận credential này. GitOps workflow đọc
-cùng secret bằng OIDC role read-only để mint token ngắn hạn. Key không nằm trong training image,
-repo, Terraform state hay GitHub Actions variables.
+Required GitHub Environment `prod` variables are `AWS_REGION`, `AWS_DEPLOY_ROLE_ARN`,
+`TRAINING_ECR_REPOSITORY`, and `DVC_BUCKET`. There are no GitHub App keys or long-lived AWS access
+keys in this repository.

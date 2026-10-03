@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.prepare import build_dataset
+from iris_pipeline.data.prepare import build_dataset
 
 
 def test_build_dataset_is_small_and_balanced(tmp_path: Path):
@@ -15,4 +15,3 @@ def test_build_dataset_is_small_and_balanced(tmp_path: Path):
         "virginica": 50,
     }
     assert not frame.isna().any().any()
-

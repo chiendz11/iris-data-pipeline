@@ -2,5 +2,7 @@
 /.github/ @chiendz11
 /data/ @chiendz11
 /src/ @chiendz11
+/contracts/ @chiendz11
+/docs/ @chiendz11
 /dvc.yaml @chiendz11
 /params.yaml @chiendz11

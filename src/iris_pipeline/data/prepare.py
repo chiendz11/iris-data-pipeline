@@ -8,7 +8,7 @@ OUTPUT_PATH = Path("data/iris.csv")
 
 
 def build_dataset(output_path: Path = OUTPUT_PATH) -> Path:
-    """Materialize sklearn's versioned Iris bundle as a deterministic CSV."""
+    """Materialize scikit-learn's Iris bundle as a deterministic CSV."""
     dataset = load_iris(as_frame=True)
     frame = dataset.frame.rename(
         columns={
@@ -25,7 +25,9 @@ def build_dataset(output_path: Path = OUTPUT_PATH) -> Path:
     return output_path
 
 
-if __name__ == "__main__":
-    path = build_dataset()
-    print(f"Wrote {path}")
+def main() -> None:
+    print(f"Wrote {build_dataset()}")
 
+
+if __name__ == "__main__":
+    main()

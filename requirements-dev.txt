@@ -5,3 +5,4 @@ cryptography<47
 packaging<26
 pytest==8.4.2
 ruff==0.14.3
+jsonschema==4.25.1

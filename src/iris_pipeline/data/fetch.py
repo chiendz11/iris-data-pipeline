@@ -8,6 +8,7 @@ import boto3
 
 
 def fetch(bucket: str, key: str, destination: str | Path) -> Path:
+    """Download the immutable S3 object referenced by a dataset event."""
     target = Path(destination)
     target.parent.mkdir(parents=True, exist_ok=True)
     boto3.client("s3").download_file(bucket, unquote_plus(key), str(target))
@@ -15,7 +16,7 @@ def fetch(bucket: str, key: str, destination: str | Path) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Download the S3 dataset that triggered Argo.")
+    parser = argparse.ArgumentParser(description="Download a versioned training dataset from S3.")
     parser.add_argument("--bucket", required=True)
     parser.add_argument("--key", required=True)
     parser.add_argument("--destination", default="data/iris.csv")

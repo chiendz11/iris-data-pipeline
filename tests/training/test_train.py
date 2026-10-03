@@ -1,7 +1,7 @@
 import pandas as pd
 
-from src.prepare import build_dataset
-from src.train import make_estimator, split_data
+from iris_pipeline.data.prepare import build_dataset
+from iris_pipeline.training.model import make_estimator, split_data
 
 
 def test_logistic_regression_reaches_quality_gate(tmp_path):
@@ -11,4 +11,3 @@ def test_logistic_regression_reaches_quality_gate(tmp_path):
     estimator = make_estimator(c=1.0, max_iter=400)
     estimator.fit(x_train, y_train)
     assert estimator.score(x_test, y_test) >= 0.90
-
