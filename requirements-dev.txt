@@ -1,6 +1,6 @@
 -r requirements.txt
 dvc[s3]==3.63.0
-pathspec==0.12.1
+pathspec==1.1.1
 packaging<26
 pytest==8.4.2
 ruff==0.14.3
