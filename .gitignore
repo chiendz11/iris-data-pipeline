@@ -9,4 +9,5 @@ data/iris.csv
 metrics.json
 outputs/
 mlruns/
+mlflow*.db
 .dvc/cache/

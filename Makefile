@@ -10,7 +10,7 @@ test:
 	pytest -q
 
 reproduce:
-	REGISTER_MODEL=false MLFLOW_TRACKING_URI=file:./mlruns dvc repro
+	REGISTER_MODEL=false MLFLOW_TRACKING_URI=sqlite:///mlflow-local.db dvc repro
 
 train-registry:
 	MLFLOW_TRACKING_URI=$${MLFLOW_TRACKING_URI:-http://localhost:5000} REGISTER_MODEL=true python -m iris_pipeline.training.train

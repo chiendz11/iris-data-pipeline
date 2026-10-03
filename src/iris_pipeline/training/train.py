@@ -114,7 +114,7 @@ def train(
     predictions = estimator.predict(x_test)
     metrics = evaluate_predictions(y_test, predictions)
 
-    tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")
+    tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow-local.db")
     experiment = os.getenv("MLFLOW_EXPERIMENT_NAME", "iris-classification")
     model_name = os.getenv("MODEL_NAME", "iris-classifier")
     register_model = _bool_env("REGISTER_MODEL", tracking_uri.startswith("http"))

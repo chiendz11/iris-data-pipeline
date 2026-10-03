@@ -44,7 +44,7 @@ credentials are present in the training image.
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt -e .
-REGISTER_MODEL=false MLFLOW_TRACKING_URI=file:./mlruns dvc repro
+REGISTER_MODEL=false MLFLOW_TRACKING_URI=sqlite:///mlflow-local.db dvc repro
 cat metrics.json
 cat outputs/model-result.json
 ```

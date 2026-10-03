@@ -37,8 +37,8 @@ stages:
       size: 886
     - path: src/iris_pipeline/training/train.py
       hash: md5
-      md5: 4755eaad190f59f04f63f4e38bb54f79
-      size: 8033
+      md5: 56404f2fa4695fb26f35ddb9a633a1ad
+      size: 8045
     params:
       params.yaml:
         data:
@@ -53,9 +53,9 @@ stages:
     outs:
     - path: metrics.json
       hash: md5
-      md5: 8df54ce63357964d7a7dd95d03ea69ee
+      md5: 96292dbd85f9006f2bfd2cc7f4d9e48b
       size: 238
     - path: outputs/model-result.json
       hash: md5
-      md5: 2d590ffeab696d3766bf1f110ba97a30
+      md5: 45ff77b26310ab2296ad367c3dcc0a20
       size: 477
